@@ -40,8 +40,7 @@ public sealed partial class DrainSystem : SharedDrainSystem
 
     // Mono
     private const float _updateInterval = 1f;
-    [Dependency] private IGameTiming _timing = default!;
-    private readonly Dictionary<EntityUid, TimeSpan> _idleUntil = new();
+    private float _updateAccumulator;
 
     public override void Initialize()
     {
@@ -50,8 +49,6 @@ public sealed partial class DrainSystem : SharedDrainSystem
         SubscribeLocalEvent<DrainComponent, ExaminedEvent>(OnExamined);
         SubscribeLocalEvent<DrainComponent, AfterInteractUsingEvent>(OnInteract);
         SubscribeLocalEvent<DrainComponent, DrainDoAfterEvent>(OnDoAfter);
-        SubscribeLocalEvent<DrainComponent, ComponentShutdown>((uid, _, _) => _idleUntil.Remove(uid));
-        SubscribeLocalEvent<RoundRestartCleanupEvent>(_ => _idleUntil.Clear());
     }
 
     private void AddEmptyVerb(Entity<DrainComponent> entity, ref GetVerbsEvent<Verb> args)
@@ -103,7 +100,6 @@ public sealed partial class DrainSystem : SharedDrainSystem
 
         if (amountToPutInDrain > 0)
         {
-            _idleUntil.Remove(target);
             var solutionToPutInDrain = _solutionContainerSystem.SplitSolution(containerSoln.Value, amountToPutInDrain);
             _solutionContainerSystem.TryAddSolution(drain.Solution.Value, solutionToPutInDrain);
 
@@ -128,29 +124,26 @@ public sealed partial class DrainSystem : SharedDrainSystem
     {
         base.Update(frameTime);
 
-        // Mono
-        var period = TickSpread.Period(_timing, _updateInterval);
-        var tick = _timing.CurTick;
-        var now = _timing.CurTime;
+        _updateAccumulator += frameTime;
+
+        if (_updateAccumulator < _updateInterval)
+            return;
+
+        _updateAccumulator -= _updateInterval;
 
         var managerQuery = GetEntityQuery<SolutionContainerManagerComponent>();
-
         var query = EntityQueryEnumerator<DrainComponent>();
+
         while (query.MoveNext(out var uid, out var drain))
         {
-            if (!TickSpread.Due(uid, tick, period))
-                continue;
-            if (_idleUntil.TryGetValue(uid, out var idle))
-            {
-                if (now < idle)
-                    continue;
-                _idleUntil.Remove(uid);
-            }
             if (!managerQuery.TryGetComponent(uid, out var manager))
                 continue;
 
-            // Best to do this one every second rather than once every tick...
-            if (!_solutionContainerSystem.ResolveSolution((uid, manager), DrainComponent.SolutionName, ref drain.Solution, out var drainSolution))
+            if (!_solutionContainerSystem.ResolveSolution(
+                    (uid, manager),
+                    DrainComponent.SolutionName,
+                    ref drain.Solution,
+                    out var drainSolution))
                 continue;
 
             if (drainSolution.Volume <= 0 && !drain.AutoDrain)
@@ -159,65 +152,75 @@ public sealed partial class DrainSystem : SharedDrainSystem
                 continue;
             }
 
-            // Remove a bit from the buffer
-            if (drain.UnitsDestroyedPerSecond > 0 && drainSolution.Volume > 0)
-                _solutionContainerSystem.SplitSolution(drain.Solution.Value, drain.UnitsDestroyedPerSecond * _updateInterval);
-
-            // This will ensure that UnitsPerSecond is per second...
-            var amount = drain.UnitsPerSecond * _updateInterval;
+            if (drain.UnitsDestroyedPerSecond > 0 &&
+                drainSolution.Volume > 0)
+            {
+                _solutionContainerSystem.SplitSolution(
+                    drain.Solution.Value,
+                    drain.UnitsDestroyedPerSecond * _updateInterval);
+            }
 
             if (drain.AutoDrain)
             {
                 _puddles.Clear();
-                _lookup.GetEntitiesInRange(Transform(uid).Coordinates, drain.Range, _puddles);
+
+                _lookup.GetEntitiesInRange(
+                    Transform(uid).Coordinates,
+                    drain.Range,
+                    _puddles);
 
                 if (_puddles.Count == 0)
                 {
-                    if (drainSolution.Volume <= 0)
-                    {
-                        // Insurance machines retain the original one-second responsiveness.
-                        if (!HasComp<BodyInsuranceSilentDrainComponent>(uid))
-                            _idleUntil[uid] = now + TimeSpan.FromSeconds(5);
-                        _ambientSoundSystem.SetAmbience(uid, false);
-                    }
-                    else
-                    {
-                        _ambientSoundSystem.SetAmbience(uid, true);
-                        _solutionContainerSystem.UpdateChemicals(drain.Solution.Value);
-                    }
+                    _ambientSoundSystem.SetAmbience(
+                        uid, drainSolution.Volume > 0);
+
+                    if (drainSolution.Volume > 0)
+                        _solutionContainerSystem.UpdateChemicals(
+                            drain.Solution.Value);
+
                     continue;
                 }
 
                 _ambientSoundSystem.SetAmbience(uid, true);
-                amount /= _puddles.Count;
+
+                var amount = drain.UnitsPerSecond
+                    * _updateInterval / _puddles.Count;
 
                 foreach (var puddle in _puddles)
                 {
-                    // Queue the solution deletion if it's empty. EvaporationSystem might also do this
-                    // but queuedelete should be pretty safe.
-                    if (!_solutionContainerSystem.ResolveSolution(puddle.Owner, puddle.Comp.SolutionName, ref puddle.Comp.Solution, out var puddleSolution))
+                    if (!_solutionContainerSystem.ResolveSolution(
+                            puddle.Owner,
+                            puddle.Comp.SolutionName,
+                            ref puddle.Comp.Solution,
+                            out var puddleSolution))
                     {
                         QueueDel(puddle);
                         continue;
                     }
 
-                    // Removes the lowest of:
-                    // the drain component's units per second adjusted for # of puddles
-                    // the puddle's remaining volume (making it cleanly zero)
-                    // the drain's remaining volume in its buffer.
-                    var transferSolution = _solutionContainerSystem.SplitSolution(puddle.Comp.Solution.Value,
-                        FixedPoint2.Min(FixedPoint2.New(amount), puddleSolution.Volume, drainSolution.AvailableVolume));
+                    var transferAmount = FixedPoint2.Min(
+                        FixedPoint2.New(amount),
+                        puddleSolution.Volume,
+                        drainSolution.AvailableVolume);
 
-                    drainSolution.AddSolution(transferSolution, _prototypeManager);
+                    if (transferAmount > 0)
+                    {
+                        var transferSolution =
+                            _solutionContainerSystem.SplitSolution(
+                                puddle.Comp.Solution.Value,
+                                transferAmount);
+
+                        drainSolution.AddSolution(
+                            transferSolution, _prototypeManager);
+                    }
 
                     if (puddleSolution.Volume <= 0)
-                    {
                         QueueDel(puddle);
-                    }
                 }
             }
 
-            _solutionContainerSystem.UpdateChemicals(drain.Solution.Value);
+            _solutionContainerSystem.UpdateChemicals(
+                drain.Solution.Value);
         }
     }
 
