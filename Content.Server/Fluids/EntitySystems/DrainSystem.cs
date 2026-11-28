@@ -1,3 +1,6 @@
+using Content.Shared.GameTicking;
+using Robust.Shared.Timing;
+using Content.Shared._DeepLagoon.Performance;
 using Content.Server.DoAfter;
 using Content.Server.Popups;
 using Content.Shared.Chemistry.EntitySystems;
@@ -36,8 +39,9 @@ public sealed partial class DrainSystem : SharedDrainSystem
     private readonly HashSet<Entity<PuddleComponent>> _puddles = new();
 
     // Mono
-    private float _updateInterval = 1f;
-    private float _updateAccumulator = 0f;
+    private const float _updateInterval = 1f;
+    [Dependency] private IGameTiming _timing = default!;
+    private readonly Dictionary<EntityUid, TimeSpan> _idleUntil = new();
 
     public override void Initialize()
     {
@@ -46,6 +50,8 @@ public sealed partial class DrainSystem : SharedDrainSystem
         SubscribeLocalEvent<DrainComponent, ExaminedEvent>(OnExamined);
         SubscribeLocalEvent<DrainComponent, AfterInteractUsingEvent>(OnInteract);
         SubscribeLocalEvent<DrainComponent, DrainDoAfterEvent>(OnDoAfter);
+        SubscribeLocalEvent<DrainComponent, ComponentShutdown>((uid, _, _) => _idleUntil.Remove(uid));
+        SubscribeLocalEvent<RoundRestartCleanupEvent>(_ => _idleUntil.Clear());
     }
 
     private void AddEmptyVerb(Entity<DrainComponent> entity, ref GetVerbsEvent<Verb> args)
@@ -97,6 +103,7 @@ public sealed partial class DrainSystem : SharedDrainSystem
 
         if (amountToPutInDrain > 0)
         {
+            _idleUntil.Remove(target);
             var solutionToPutInDrain = _solutionContainerSystem.SplitSolution(containerSoln.Value, amountToPutInDrain);
             _solutionContainerSystem.TryAddSolution(drain.Solution.Value, solutionToPutInDrain);
 
@@ -122,16 +129,23 @@ public sealed partial class DrainSystem : SharedDrainSystem
         base.Update(frameTime);
 
         // Mono
-        _updateAccumulator += frameTime;
-        if (_updateAccumulator < _updateInterval)
-            return;
-        _updateAccumulator -= _updateInterval;
+        var period = TickSpread.Period(_timing, _updateInterval);
+        var tick = _timing.CurTick;
+        var now = _timing.CurTime;
 
         var managerQuery = GetEntityQuery<SolutionContainerManagerComponent>();
 
         var query = EntityQueryEnumerator<DrainComponent>();
         while (query.MoveNext(out var uid, out var drain))
         {
+            if (!TickSpread.Due(uid, tick, period))
+                continue;
+            if (_idleUntil.TryGetValue(uid, out var idle))
+            {
+                if (now < idle)
+                    continue;
+                _idleUntil.Remove(uid);
+            }
             if (!managerQuery.TryGetComponent(uid, out var manager))
                 continue;
 
@@ -146,7 +160,8 @@ public sealed partial class DrainSystem : SharedDrainSystem
             }
 
             // Remove a bit from the buffer
-            _solutionContainerSystem.SplitSolution(drain.Solution.Value, (drain.UnitsDestroyedPerSecond * _updateInterval));
+            if (drain.UnitsDestroyedPerSecond > 0 && drainSolution.Volume > 0)
+                _solutionContainerSystem.SplitSolution(drain.Solution.Value, drain.UnitsDestroyedPerSecond * _updateInterval);
 
             // This will ensure that UnitsPerSecond is per second...
             var amount = drain.UnitsPerSecond * _updateInterval;
@@ -156,14 +171,24 @@ public sealed partial class DrainSystem : SharedDrainSystem
                 _puddles.Clear();
                 _lookup.GetEntitiesInRange(Transform(uid).Coordinates, drain.Range, _puddles);
 
-                if (_puddles.Count == 0 && drainSolution.Volume <= 0)
+                if (_puddles.Count == 0)
                 {
-                    _ambientSoundSystem.SetAmbience(uid, false);
+                    if (drainSolution.Volume <= 0)
+                    {
+                        // Insurance machines retain the original one-second responsiveness.
+                        if (!HasComp<BodyInsuranceSilentDrainComponent>(uid))
+                            _idleUntil[uid] = now + TimeSpan.FromSeconds(5);
+                        _ambientSoundSystem.SetAmbience(uid, false);
+                    }
+                    else
+                    {
+                        _ambientSoundSystem.SetAmbience(uid, true);
+                        _solutionContainerSystem.UpdateChemicals(drain.Solution.Value);
+                    }
                     continue;
                 }
 
                 _ambientSoundSystem.SetAmbience(uid, true);
-
                 amount /= _puddles.Count;
 
                 foreach (var puddle in _puddles)

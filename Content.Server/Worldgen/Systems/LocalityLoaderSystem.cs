@@ -1,3 +1,4 @@
+using Content.Shared._DeepLagoon.Performance;
 using Content.Server.Worldgen.Components;
 using Robust.Server.GameObjects;
 using Content.Server._NF.Worldgen.Components.Debris; // Frontier
@@ -39,9 +40,13 @@ public sealed partial class LocalityLoaderSystem : BaseWorldSystem
     public override void Update(float frameTime)
     {
         var e = EntityQueryEnumerator<LocalityLoaderComponent, TransformComponent>();
+        var period = TickSpread.Period(_timing, 0.5f);
+        var tick = _timing.CurTick;
 
         while (e.MoveNext(out var uid, out var loadable, out var xform))
         {
+            if (!TickSpread.Due(uid, tick, period))
+                continue;
             if (!_controllerQuery.TryComp(xform.MapUid, out var controller)) // Mono
             {
                 RaiseLocalEvent(uid, new LocalStructureLoadedEvent());
@@ -87,18 +92,9 @@ public sealed partial class LocalityLoaderSystem : BaseWorldSystem
     // Frontier
     private void OnDebrisDespawn(EntityUid entity, SpaceDebrisComponent component, EntityTerminatingEvent e)
     {
-        if (entity != null)
+        if (entity.IsValid())
         {
-            // Handle mobrestrictions getting deleted
-            var query = AllEntityQuery<NFSalvageMobRestrictionsComponent>();
-
-            while (query.MoveNext(out var salvUid, out var salvMob))
-            {
-                if (entity == salvMob.LinkedGridEntity && salvMob.DespawnIfOffLinkedGrid) // Mono - fix
-                {
-                    QueueDel(salvUid);
-                }
-            }
+            DespawnRestrictions(entity);
 
             // Do not delete the grid, it is being deleted.
             _linkedLifecycleGrid.UnparentPlayersFromGrid(grid: entity, deleteGrid: false, ignoreLifeStage: true);

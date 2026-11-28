@@ -158,6 +158,7 @@ public sealed partial class ExplosionSystem : SharedExplosionSystem
         _tileGeneration?.Steps.Dispose();
         _tileGeneration = null;
         _explosionQueue.Clear();
+        _microQueue.Clear();
         _queuedExplosions.Clear();
         if (_activeExplosion != null)
         {
@@ -330,7 +331,8 @@ public sealed partial class ExplosionSystem : SharedExplosionSystem
             return;
 
         // Mono - MapCoordinates -> EntityCoordinates
-        QueueExplosion(gridPos!.Value, typeId, totalIntensity, slope, maxTileIntensity, uid, tileBreakScale, maxTileBreak, canCreateVacuum, addLog: false);
+        if (!TryQueueMicroExplosion(gridPos!.Value, typeId, totalIntensity, slope, maxTileIntensity, tileBreakScale, maxTileBreak, canCreateVacuum, uid))
+            QueueExplosion(gridPos!.Value, typeId, totalIntensity, slope, maxTileIntensity, uid, tileBreakScale, maxTileBreak, canCreateVacuum, addLog: false);
 
         if (!addLog)
             return;
@@ -406,12 +408,14 @@ public sealed partial class ExplosionSystem : SharedExplosionSystem
             if (queued.Proto.ID != type.ID)
                 continue;
 
-            var dst = queued.Proto.MaxCombineDistance;
+            var dst = CombineDistance(queued, epicenter, totalIntensity, queued.Proto.MaxCombineDistance);
             if (!epicenter.TryDistance(EntityManager, queued.Epicenter, out var distance) || distance > dst)
                 continue;
 
             // they are close enough to combine so just add total intensity and prevent queuing another one
             queued.TotalIntensity += totalIntensity;
+            if (MicroMergeEnabled)
+                queued.MaxTileIntensity = MathF.Max(queued.MaxTileIntensity, maxTileIntensity);
             return;
         }
 

@@ -40,6 +40,7 @@ public sealed partial class WorldControllerSystem : EntitySystem
         SubscribeLocalEvent<LoadedChunkComponent, ComponentStartup>(OnChunkLoadedCore);
         SubscribeLocalEvent<LoadedChunkComponent, ComponentShutdown>(OnChunkUnloadedCore);
         SubscribeLocalEvent<WorldChunkComponent, ComponentShutdown>(OnChunkShutdown);
+        InitializeMonolithWorldgen();
     }
 
     /// <summary>
@@ -47,6 +48,7 @@ public sealed partial class WorldControllerSystem : EntitySystem
     /// </summary>
     private void OnChunkShutdown(EntityUid uid, WorldChunkComponent component, ComponentShutdown args)
     {
+        _unneededSince.Remove(uid);
         if (!TryComp<WorldControllerComponent>(component.Map, out var controller))
             return;
 
@@ -108,8 +110,10 @@ public sealed partial class WorldControllerSystem : EntitySystem
             _chunksToLoad[uid] = new Dictionary<Vector2i, List<EntityUid>>();
         }
 
-        if (_chunksToLoad.Count == 0)
-            return; // Just bail early.
+        if (_chunksToLoad.Count == 0 && EntityManager.Count<LoadedChunkComponent>() == 0)
+            return;
+
+        CollectActiveHelmGrids();
 
         var loaderEnum = EntityQueryEnumerator<WorldLoaderComponent, TransformComponent>();
 
@@ -117,6 +121,9 @@ public sealed partial class WorldControllerSystem : EntitySystem
         {
             if (worldLoader.Disabled) // Frontier: disable world loading
                 continue; // Frontier
+
+            if (IsIdleHelm(uid, xform))
+                continue;
 
             // Mono edit
             TryAddChunkLoader(uid, xform, (int) Math.Ceiling(worldLoader.Radius / (float) WorldGen.ChunkSize) + 1);
@@ -156,12 +163,16 @@ public sealed partial class WorldControllerSystem : EntitySystem
         var chunksUnloaded = 0;
 
         // Make sure these chunks get unloaded at the end of the tick.
-        while (loadedEnum.MoveNext(out var uid, out var _, out var chunk))
+        while (loadedEnum.MoveNext(out var uid, out var loaded, out var chunk))
         {
-            var coords = chunk.Coordinates;
+            var hasController = _chunksToLoad.TryGetValue(chunk.Map, out var demand);
+            var needed = demand?.ContainsKey(chunk.Coordinates) == true;
+            if (!needed)
+                loaded.Loaders = null;
 
-            if (!_chunksToLoad[chunk.Map].ContainsKey(coords))
+            if (!hasController || ShouldUnload(uid, needed))
             {
+                _unneededSince.Remove(uid);
                 RemCompDeferred<LoadedChunkComponent>(uid);
                 chunksUnloaded++;
             }
@@ -169,6 +180,8 @@ public sealed partial class WorldControllerSystem : EntitySystem
 
         if (chunksUnloaded > 0)
             _sawmill.Debug($"Queued {chunksUnloaded} chunks for unload.");
+
+        LogChunkCount();
 
         if (_chunksToLoad.All(x => x.Value.Count == 0))
             return;
@@ -271,7 +284,7 @@ public sealed partial class WorldControllerSystem : EntitySystem
             return false;
 
         var map = mapOrNull.Value;
-        if (!_chunksToLoad.ContainsKey(map))
+        if (!_chunksToLoad.TryGetValue(map, out var set))
             return false;
 
         var wc = _xformSys.GetWorldPosition(xform);
@@ -281,13 +294,11 @@ public sealed partial class WorldControllerSystem : EntitySystem
         var coords = WorldGen.WorldToChunkCoords(wc);
         var chunks = new GridPointsNearEnumerator(coords.Floored(), radius);
 
-        var set = _chunksToLoad[map];
-
         while (chunks.MoveNext(out var chunk))
         {
-            if (!set.TryGetValue(chunk.Value, out _))
-                set[chunk.Value] = new List<EntityUid>(4);
-            set[chunk.Value].Add(uid);
+            if (!set.TryGetValue(chunk.Value, out var loaders))
+                set[chunk.Value] = loaders = new List<EntityUid>(4);
+            loaders.Add(uid);
         }
 
         return true;

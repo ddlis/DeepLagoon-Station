@@ -103,13 +103,14 @@ public sealed partial class ExplosionSystem
     /// </summary>
     public override void Update(float frameTime)
     {
-        if (_activeExplosion == null && _tileGeneration == null && _explosionQueue.Count == 0)
+        if (_activeExplosion == null && _tileGeneration == null && _explosionQueue.Count == 0 && _microQueue.Count == 0)
             // nothing to do
             return;
 
         Stopwatch.Restart();
         _measureConsequences = _cfg.IsCVarRegistered("log.perf_diagnostics") && _cfg.GetCVar<int>("log.perf_diagnostics") > 0;
         _remainingItemThrowsThisTick = ItemThrowsPerTick;
+        ProcessMicroExplosions();
 
         var tilesRemaining = TilesPerTick;
         while (tilesRemaining > 0 && MaxProcessingTime > Stopwatch.Elapsed.TotalMilliseconds)
