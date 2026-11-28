@@ -6,6 +6,14 @@
   save: false
   abstract: true
   components:
+  - type: MetalImpact
+  - type: RangedDamageSound
+    soundGroups:
+      Brute:
+        collection: MetalBulletImpact
+    soundTypes:
+      Heat:
+        collection: MetalLaserImpact
   - type: PsionicInsulation
   - type: SurgerySpeedModifier # Mono
   - type: Stripping # Mono

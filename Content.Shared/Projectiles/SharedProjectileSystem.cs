@@ -38,6 +38,7 @@ using Content.Shared._Mono.CCVar;
 using Robust.Shared;
 using Content.Shared.BarricadeBlock; // BF14
 using Robust.Shared.Random; // BF14
+using Content.Shared._DeepLagoon.Combat;
 
 namespace Content.Shared.Projectiles;
 
@@ -241,6 +242,28 @@ public abstract partial class SharedProjectileSystem : EntitySystem
                 // On client, raise local event for client-side or predicted projectiles
                 RaiseLocalEvent(impactEffectEv);
             }
+        }
+
+        // DeepLagoon - Metal impact effects
+        if (_net.IsServer &&
+            !deleted &&
+            modifiedDamage is not null &&
+            HasComp<MetalImpactComponent>(target) &&
+            modifiedDamage.DamageDict.TryGetValue(
+                "Piercing", out var piercing) &&
+            piercing > 0)
+        {
+            var proto = _random.Pick(new[]
+            {
+        "MetalImpactSparks",
+        "MetalImpactSparksAlt"
+    });
+
+            var metalImpact = new ImpactEffectEvent(
+                proto,
+                GetNetCoordinates(coordinates));
+
+            RaiseNetworkEvent(metalImpact, impactFilter);
         }
 
         return modifiedDamage;

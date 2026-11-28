@@ -5,6 +5,14 @@
   id: BaseFactionBorgChassis
   abstract: true
   components:
+  - type: MetalImpact
+  - type: RangedDamageSound
+    soundGroups:
+      Brute:
+        collection: MetalBulletImpact
+    soundTypes:
+      Heat:
+        collection: MetalLaserImpact
   - type: MobThresholds
     thresholds:
       0: Alive

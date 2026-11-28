@@ -1,0 +1,24 @@
+- type: entity
+  id: MetalImpactSparks
+  parent: EffectSparks
+  categories: [ HideSpawnMenu ]
+
+- type: entity
+  id: MetalImpactSparksAlt
+  categories: [ HideSpawnMenu ]
+  components:
+  - type: TimedDespawn
+    lifetime: 0.25
+  - type: Sprite
+    drawdepth: Effects
+    noRot: true
+    layers:
+    - shader: unshaded
+      map: ["enum.EffectLayers.Unshaded"]
+      sprite: _DeepLagoon/Effects/metal_impacts.rsi
+      state: spark_alt
+  - type: EffectVisuals
+  - type: Tag
+    tags:
+    - HideContextMenu
+  - type: AnimationPlayer

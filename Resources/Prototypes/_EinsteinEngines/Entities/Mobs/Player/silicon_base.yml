@@ -5,6 +5,7 @@
   parent: [BaseMob, MobDamageable, MobCombat, MobAtmosExposed, MobFlammable]
   abstract: true
   components:
+  - type: MetalImpact
   - type: ContentEye
   - type: CameraRecoil
   - type: Reactive

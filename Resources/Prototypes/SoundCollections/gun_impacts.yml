@@ -37,6 +37,9 @@
   - /Audio/_WF/Weapons/Impacts/impact_metal_15.ogg
   - /Audio/_WF/Weapons/Impacts/impact_metal_16.ogg
   - /Audio/_WF/Weapons/Impacts/impact_metal_17.ogg
+  - /Audio/_DeepLagoon/Weapons/Impacts/ricochet_01.ogg
+  - /Audio/_DeepLagoon/Weapons/Impacts/ricochet_02.ogg
+  - /Audio/_DeepLagoon/Weapons/Impacts/ricochet_03.ogg
 
 - type: soundCollection
   id: MetalLaserImpact

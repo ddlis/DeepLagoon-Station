@@ -7,6 +7,7 @@ using Robust.Client.UserInterface.Controls;
 using Robust.Client.UserInterface.XAML;
 using Robust.Shared;
 using Robust.Shared.Configuration;
+using Content.Shared._DeepLagoon.CCVar;
 
 namespace Content.Client.Options.UI.Tabs;
 
@@ -64,6 +65,7 @@ public sealed partial class GraphicsTab : Control
         Control.AddOptionCheckBox(CCVars.HudFpsCounterVisible, FpsCounterCheckBox);
 
         Control.AddOptionCheckBox(FHCCVars.RenderStarSystem, RenderStarSystemCheckBox); // Far Horizons
+        Control.AddOptionCheckBox(DeepLagoonImpactCVars.MetalImpactEffects,MetalImpactEffectsCheckBox);
 
         Control.Initialize();
 
