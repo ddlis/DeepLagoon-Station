@@ -33,6 +33,8 @@ using Robust.Shared.Physics.Systems;
 using Robust.Shared.Random;
 using Content.Server._NF.Atmos.Components; // Frontier
 using Robust.Shared.Timing;
+using Content.Server.Mood;
+using Content.Shared.Mood;
 
 namespace Content.Server.Atmos.EntitySystems
 {
@@ -59,6 +61,10 @@ namespace Content.Server.Atmos.EntitySystems
         private EntityQuery<PhysicsComponent> _physicsQuery;
 
         private static readonly TimeSpan UpdateTime = TimeSpan.FromSeconds(1);
+
+        // DeepLagoon - Fire mood optimization
+        private static readonly TimeSpan FireMoodRefreshInterval =
+            TimeSpan.FromSeconds(30);
 
         private readonly Dictionary<Entity<FlammableComponent>, float> _fireEvents = new();
         private readonly List<Entity<FlammableComponent>> _updates = new();
@@ -466,6 +472,54 @@ namespace Content.Server.Atmos.EntitySystems
             _stunSystem.TryKnockdown(uid, flammable.ResistTime, true);
         }
 
+
+        private void UpdateFireEffects(
+            EntityUid uid,
+            FlammableComponent flammable,
+            TimeSpan curTime)
+        {
+            // Update fire alerts only when necessary.
+            if (flammable.OnFire)
+            {
+                if (!_alertsSystem.IsShowingAlert(uid, flammable.FireAlert))
+                    _alertsSystem.ShowAlert(uid, flammable.FireAlert);
+            }
+            else
+            {
+                if (_alertsSystem.IsShowingAlert(uid, flammable.FireAlert))
+                    _alertsSystem.ClearAlert(uid, flammable.FireAlert);
+            }
+
+            // Objects without mood don't need mood events.
+            if (!TryComp<MoodComponent>(uid, out var mood) ||
+                !HasComp<NetMoodComponent>(uid))
+            {
+                return;
+            }
+
+            var hasFireMood = mood.UncategorisedEffects.ContainsKey("OnFire");
+
+            if (!flammable.OnFire)
+            {
+                flammable.NextFireMoodRefresh = TimeSpan.Zero;
+
+                if (hasFireMood)
+                    RaiseLocalEvent(uid, new MoodRemoveEffectEvent("OnFire"));
+
+                return;
+            }
+
+            // Apply immediately and periodically refresh the timed mood effect.
+            if (!hasFireMood || curTime >= flammable.NextFireMoodRefresh)
+            {
+                flammable.NextFireMoodRefresh =
+                    curTime + FireMoodRefreshInterval;
+
+                RaiseLocalEvent(uid, new MoodEffectEvent("OnFire"));
+            }
+        }
+
+
         public override void Update(float frameTime)
         {
             // process all fire events
@@ -517,21 +571,23 @@ namespace Content.Server.Atmos.EntitySystems
                     flammable.FireStacks = MathF.Min(0, flammable.FireStacks + 1);
                 }
 
+
                 if (!flammable.OnFire)
                 {
-                    _alertsSystem.ClearAlert(uid, flammable.FireAlert);
-                    RaiseLocalEvent(uid, new Content.Shared.Mood.MoodRemoveEffectEvent("OnFire"));
+                    UpdateFireEffects(uid, flammable, curTime);
                     continue;
                 }
 
                 if (_greenZones.SuppressesFire(uid))
                 {
                     Extinguish(uid, flammable, force: true);
+                    UpdateFireEffects(uid, flammable, curTime);
                     continue;
                 }
 
-                _alertsSystem.ShowAlert(uid, flammable.FireAlert);
-                RaiseLocalEvent(uid, new Content.Shared.Mood.MoodEffectEvent("OnFire"));
+                // DeepLagoon - Fire effects optimization
+                UpdateFireEffects(uid, flammable, curTime);
+
 
                 if (flammable.FireStacks > 0)
                 {

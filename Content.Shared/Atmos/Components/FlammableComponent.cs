@@ -42,6 +42,10 @@ namespace Content.Shared.Atmos.Components
         [DataField]
         public bool OnFire;
 
+        // DeepLagoon - Fire mood optimization
+        [ViewVariables]
+        public TimeSpan NextFireMoodRefresh;
+
         [ViewVariables(VVAccess.ReadWrite)]
         [DataField]
         public float FireStacks;

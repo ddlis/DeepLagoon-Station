@@ -46,6 +46,10 @@ namespace Content.Server.Decals
         private UpdatePlayerJob _updateJob;
         private List<ICommonSession> _sessions = new();
 
+        // DeepLagoon - Decal optimization
+        private const float DecalUpdateInterval = 0.2f;
+        private float _decalUpdateAccumulator;
+
         // If this ever gets parallelised then you'll want to increase the pooled count.
         private ObjectPool<HashSet<Vector2i>> _chunkIndexPool =
             new DefaultObjectPool<HashSet<Vector2i>>(
@@ -463,23 +467,30 @@ namespace Content.Server.Decals
             return ModifyDecal(gridId, decalId, x => x.WithId(id), comp);
         }
 
+
         public override void Update(float frameTime)
         {
             base.Update(frameTime);
 
-            foreach (var ent in _dirtyChunks.Keys)
-            {
-                if (TryGetEntity(ent, out var uid) && _decalGridQuery.TryComp(uid, out var decals)) // Mono: Use entity query.
-                    Dirty(uid.Value, decals);
-            }
+            // DeepLagoon - Decal optimization
+            _decalUpdateAccumulator += frameTime;
 
-            /* // Mono edit: early return is redundant, if PVS is disabled, it will clear at end anyways.
-            if (!PvsEnabled)
+            if (_dirtyChunks.Count == 0 &&
+                _decalUpdateAccumulator < DecalUpdateInterval)
             {
-                _dirtyChunks.Clear();
                 return;
             }
-            */
+
+            _decalUpdateAccumulator = 0f;
+
+            foreach (var ent in _dirtyChunks.Keys)
+            {
+                if (TryGetEntity(ent, out var uid) &&
+                    _decalGridQuery.TryComp(uid, out var decals))
+                {
+                    Dirty(uid.Value, decals);
+                }
+            }
 
             if (PvsEnabled)
             {
@@ -499,6 +510,7 @@ namespace Content.Server.Decals
 
             _dirtyChunks.Clear();
         }
+
 
         public void UpdatePlayer(ICommonSession player)
         {
